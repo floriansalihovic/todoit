@@ -1,6 +1,8 @@
 (ns todoit.core)
 
-(defn foo
-  "I don't do a whole lot."
-  [x]
-  (println x "Hello, World!"))
+(defn hello-world
+  "Default handler."
+  [reg]
+  {:status 200
+   :body "Hello, world!"
+   :headers {}})
