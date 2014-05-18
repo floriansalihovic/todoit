@@ -3,7 +3,12 @@
             [io.pedestal.http.route :as route :refer [router]]
             [io.pedestal.http :as http]
             [ns-tracker.core :refer [ns-tracker]]
-            [ring.handler.dump :refer [handle-dump]]))
+            [ring.handler.dump :refer [handle-dump]]
+            [io.pedestal.interceptor :refer [defon-request]]))
+
+(defon-request capitalize-name [req]
+  (update-in req [:query-params :name]
+    (fn [name] (when name (clojure.string/capitalize name)))))
 
 (defn hello-world [req]
   (let [name (get-in req [:query-params :name])]
@@ -18,7 +23,7 @@
 
 (defroutes routes
  [[["/"
-    ["/hello" {:get hello-world}]
+    ["/hello" ^:interceptors [capitalize-name] {:get hello-world}]
     ["/goodbye" {:get goodbye-world}]
     ["/request" {:any handle-dump}]]]])
 

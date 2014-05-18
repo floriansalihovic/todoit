@@ -471,7 +471,55 @@ Refreshing [/request?name=ryan](http://localhost:8080/request?name=ryan) will no
           http/create-server
           http/start))
 
+This will print the name passed URL query string, but it will take the name as is, when the name is written lowercase, it will be printed as such. To fix this wrong behavior, a new interceptor will be added. This is done by adding the interceptor namespace ```io.pedestal.interceptors```. It provides a couple of helpers, an the one which will be referred to for capitalizing the name is ```defon-request```. The interceptor defined will respind only to the enter phase of a request. The interceptor being implemented will use CLojure's ```update-in``` function to capitalize the name if it is in the query parameters. Since the interceptor is most interesting in conjunction with the ```/hello``` route, it will be added to a list of interceptors specifically for this route.
 
+    (ns todoit.core
+      (:require [io.pedestal.http.route.definition :refer [defroutes]]
+                [io.pedestal.http.route :as route :refer [router]]
+                [io.pedestal.http :as http]
+                [ns-tracker.core :refer [ns-tracker]]
+                [ring.handler.dump :refer [handle-dump]]
+                [io.pedestal.interceptor :refer [defon-request]]))
+    
+    (defon-request capitalize-name [req]
+      (update-in req [:query-params :name]
+        (fn [name] (when name (clojure.string/capitalize name)))))
+    
+    (defn hello-world [req]
+      (let [name (get-in req [:query-params :name])]
+        {:status 200
+         :body (str "Hello, " name "!")
+         :headers {}}))
+    
+    (defn goodbye-world [req]
+      {:status 200
+       :body "Goodbye, cruel world."
+       :headers {}})
+    
+    (defroutes routes
+     [[["/"
+        ["/hello" ^:interceptors [capitalize-name] {:get hello-world}]
+        ["/goodbye" {:get goodbye-world}]
+        ["/request" {:any handle-dump}]]]])
+    
+    (def modified-namespaces (ns-tracker "src"))
+    
+    (def service
+      {::http/interceptors [http/log-request
+                            http/not-found
+                            route/query-params
+                            (router (fn []
+                              (doseq [ns-sym (modified-namespaces)]
+                                (require ns-sym :reload))
+                                routes))]
+       ::http/port 8080})
+    
+    (defn -main [& args]
+      (-> service
+          http/create-server
+          http/start))
+ 
+ This will print the name passed properly.
 
 
 
