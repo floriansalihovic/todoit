@@ -158,8 +158,7 @@ Should start the server and lets us see ```Hello, world!``` in the browser when 
     
     </configuration>
 
-To have a more continuous workflow, a library called ```ns-tracker``` is added. It provides an  observation mechanism for files and when these change. This is added as a dependency into
-```project.clj```.
+To have a more continuous workflow, a library called ```ns-tracker``` is added. It provides an  observation mechanism for files and when these change. This is added as a dependency into ```project.clj```.
 
     (defproject todoit "0.1.0-SNAPSHOT"
       :description "FIXME: write description"
@@ -520,7 +519,54 @@ This will print the name passed URL query string, but it will take the name as i
           http/start))
  
  This will print the name passed properly.
+ 
+ The next big piece of work will be adding persistence to the project. Starting by adding a new file. In ```resources``` a file named ```todos.edn``` should be added. It contains a small schema for the datomic database.
+ 
+    [{:db/id #db/id [:db.part/db]
+      :db/ident :todo/title
+      :db/valueType :db.type/string
+      :db/cardinality :db.cardinality/one
+      :db/doc "The title of the todo."
+      :db.install/_attribute :db.part/db} 
+     {:db/id #db/id [:db.part/db]
+      :db/ident :todo/description
+      :db/valueType :db.type/string
+      :db/cardinality :db.cardinality/one
+      :db/doc "The description of the todo."
+      :db.install/_attribute :db.part/db} 
+     {:db/id #db/id [:db.part/db]
+      :db/ident :todo/completed?
+      :db/valueType :db.type/boolean
+      :db/cardinality :db.cardinality/one
+      :db/doc "The completion status of the todo."
+      :db.install/_attribute :db.part/db}]
 
+It contains basically a list of maps describing a todos attributes with attributes. The attributes used are ```title``` and ```description``` of type string and a ```completion?``` indicator of type boolean. In ```project.clj``` datomic will be added as a dependency.
+
+    (defproject todoit "0.1.0-SNAPSHOT"
+      :description "FIXME: write description"
+      :url "http://example.com/FIXME"
+      :license {:name "Eclipse Public License"
+                :url "http://www.eclipse.org/legal/epl-v10.html"}
+      :dependencies [[org.clojure/clojure "1.6.0"]
+                     [io.pedestal/pedestal.service "0.3.0-SNAPSHOT"]
+                     [io.pedestal/pedestal.service-tools "0.3.0-SNAPSHOT"]
+                     [io.pedestal/pedestal.jetty "0.3.0-SNAPSHOT"]
+                     [ns-tracker "0.2.2"]
+                     [ring/ring-devel "1.2.2"]
+                     [com.datomic/datomic-free "0.9.4699"
+                      :exclusions [org.slf4j/jul-to-slf4j
+                               org.slf4j/slf4j-nop]]
+                     ]
+      :main todoit.core)
+
+To interact with the application and playing around with the persistence layer, a repl session will be started.
+
+    lein repl
+
+This will download the dependencies and connect to the application.
+
+Now, ```src/todoit``` a new folder ```todo``` will be added with the file ```db.clj```.
 
 
 
