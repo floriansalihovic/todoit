@@ -158,13 +158,137 @@ Should start the server and lets us see ```Hello, world!``` in the browser when 
     
     </configuration>
 
+To have a more continuous workflow, a library called ```ns-tracker``` is added. It provides an  observation mechanism for files and when these change. This is added as a dependency into
+```project.clj```.
+
+    (defproject todoit "0.1.0-SNAPSHOT"
+      :description "FIXME: write description"
+      :url "http://example.com/FIXME"
+      :license {:name "Eclipse Public License"
+                :url "http://www.eclipse.org/legal/epl-v10.html"}
+      :dependencies [[org.clojure/clojure "1.6.0"]
+                     [io.pedestal/pedestal.service "0.3.0-SNAPSHOT"]
+                     [io.pedestal/pedestal.service-tools "0.3.0-SNAPSHOT"]
+                     [io.pedestal/pedestal.jetty "0.3.0-SNAPSHOT"]
+                     [ns-tracker "0.2.2"]
+                     ]
+      :main todoit.core)
+
+This library will be used in ```core.todoit``` while refering to the function ```ns-tracker```.
+
+    (ns todoit.core
+      (:require [io.pedastal.http.route.definition :refer [defroutes]]
+                [io.pedastal.http.route as route :refer [router]]
+                [io.pedastal.http :as http]
+                [ns-tracker.core :refer [ns-tracker]]))
+    
+    (defn hello-world [req]
+      {:status 200
+       :body "Hello, world!"
+       :headers {}})
+    
+    (defroutes routes
+      [[["/"
+         ["/hello" {:get hello-world}]]]])
+    
+    (def service {::http/interceptors [(router routes)]
+                  ::http/port 8080})
+                  
+    (defn -main [& args]
+      (-> service
+          http/create-server
+          http/start))
+
+The function will be used in a ```def modified-namespaces``` to observe the ```src``` directory, monitoring it for changes.
+
+    (ns todoit.core
+      (:require [io.pedastal.http.route.definition :refer [defroutes]]
+                [io.pedastal.http.route as route :refer [router]]
+                [io.pedastal.http :as http]
+                [ns-tracker.core :refer [ns-tracker]]))
+    
+    (defn hello-world [req]
+      {:status 200
+       :body "Hello, world!"
+       :headers {}})
+    
+    (defroutes routes
+      [[["/"
+         ["/hello" {:get hello-world}]]]])
+    
+    (def modified-namespaces (ns-tracker "src"))
+    
+    (def service {::http/interceptors [(router routes)]
+                  ::http/port 8080})
+                  
+    (defn -main [& args]
+      (-> service
+          http/create-server
+          http/start))
+
+The neat thing about the router function is, that it does not just take a predefiend map, but also a function. This is a handy observation, because substituting it with a function allows us to dynamically load routes. The anonymous function will iterate over all known namespaces to reload them if necessary returning the modified routes table.
+
+    (ns todoit.core
+      (:require [io.pedastal.http.route.definition :refer [defroutes]]
+                [io.pedastal.http.route as route :refer [router]]
+                [io.pedastal.http :as http]
+                [ns-tracker.core :refer [ns-tracker]]))
+    
+    (defn hello-world [req]
+      {:status 200
+       :body "Hello, world!"
+       :headers {}})
+    
+    (defroutes routes
+      [[["/"
+         ["/hello" {:get hello-world}]]]])
+    
+    (def modified-namespaces (ns-tracker "src"))
+    
+    (def service {::http/interceptors [(router (fn []
+        (doseq [ns-sym (modified-namespaces)]
+          (require ns-sym :reload))
+          routes))]
+                  ::http/port 8080})
+                  
+    (defn -main [& args]
+      (-> service
+          http/create-server
+          http/start))
+
+To check if it is working, a new route ```/goodbye``` is added while the server is running. 
 
 
-
-
-
-
-
-
-
-
+    (ns todoit.core
+      (:require [io.pedastal.http.route.definition :refer [defroutes]]
+                [io.pedastal.http.route as route :refer [router]]
+                [io.pedastal.http :as http]
+                [ns-tracker.core :refer [ns-tracker]]))
+    
+    (defn hello-world [req]
+      {:status 200
+       :body "Hello, world!"
+       :headers {}})
+    
+    (defn goodbye-world [req]
+      {:status 200
+       :body "Goodbye, cruel world!"
+       :headers {}})
+    
+    (defroutes routes
+      [[["/"
+         ["/hello" {:get hello-world}]
+         ["/goodbye" {:get goodbye-world}]]]])
+    
+    (def modified-namespaces (ns-tracker "src"))
+    
+    (def service {::http/interceptors [(router (fn []
+        (doseq [ns-sym (modified-namespaces)]
+          (require ns-sym :reload))
+          routes))]
+                  ::http/port 8080})
+                  
+    (defn -main [& args]
+      (-> service
+          http/create-server
+          http/start))

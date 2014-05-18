@@ -7,5 +7,6 @@
                  [io.pedestal/pedestal.service "0.3.0-SNAPSHOT"]
                  [io.pedestal/pedestal.service-tools "0.3.0-SNAPSHOT"]
                  [io.pedestal/pedestal.jetty "0.3.0-SNAPSHOT"]
+                 [ns-tracker "0.2.2"]
                  ]
   :main todoit.core)
