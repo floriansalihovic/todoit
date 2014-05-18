@@ -13,7 +13,7 @@
 (defn hello-world [req]
   (let [name (get-in req [:query-params :name])]
     {:status 200
-     :body (str "Hello, " name "!")
+     :body (str "Hello, " (if (not(clojure.string/blank? name)) name "world") "!")
      :headers {}}))
 
 (defn goodbye-world [req]
