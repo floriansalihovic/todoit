@@ -128,4 +128,43 @@ The ```-main``` function takes an arbitrary amount of arguments which will be ig
 
     lein run
 
-Should start the server and lets us see ```Hello, world!``` in the browser when ```localhost:8080/hello``` is requested.
+Should start the server and lets us see ```Hello, world!``` in the browser when ```localhost:8080/hello``` is requested. To reduce the output created by the Jetty to the minimum and yet necessary data, in ```/resources``` a file called ```logback.xml``` gets created.
+
+    <?xml version="1.0" encoding="UTF-8"?>
+    <!-- Simple logback configuration for STOUT-only. -->
+    <configuration scan="true" scanPeriod="10 seconds">
+    
+	  <appender name="STOUT" class="ch.qos.logback.core.ConsoleAppender">
+	    
+	    <!-- encoder defaults to ch.qos.logback.classic.encoder.PatternLayoutEncoder. -->
+	    <encoder>
+		  <pattern>%-5level %logger{36} - %msg%n</pattern>
+	    </encoder>
+	    
+	    <!-- Only log level INFO and above. -->
+	    <filter class="ch.qos.logback.classic.filter.ThresholdFilter">
+	      <level>INFO</level>
+	    </filter>
+	  </appender>
+    
+      <root level="INFO">
+	    <appender-ref ref="STOUT"/>
+      </root>
+    
+      <!-- For loggers in these namespaces, log all levels. -->
+      <logger name="user" level="ALL" />
+      <logger name="io.pedestal" level="ALL" />
+      <logger name="datomic.db" level="ERROR" />
+    
+    </configuration>
+
+
+
+
+
+
+
+
+
+
+
