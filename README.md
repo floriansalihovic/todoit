@@ -292,3 +292,191 @@ To check if it is working, a new route ```/goodbye``` is added while the server 
       (-> service
           http/create-server
           http/start))
+
+One will notice though, that the server does not log any useful information to the console. That is because routes and interceptors stand for their own. What's basically missing is a chain of middleware to aggregate the functions and handle errors, logging etc. This is basically done in a self contained context for each request and response.
+
+TODO: revisit minute 23:00
+
+Interceptors can have an ```:enter``` function, which manipulates the incoming by adding new keys and corresponding values. A ```:leave``` function can be provided optionally as well. This may be very handy when a response is about to be send back and the content-type of the response may be modified for example. Finally, an optional :error function can be implemented. It will catch the error and let it bubble up by the interceptor chain and let it invoke an interceptor, which is an error responder. What gets returned from that function will become a new response.
+
+One thing to be noticed is, that routers are interceptors as well. Interceptor can be used at the service level or at various points thoughout the routing table. For example interceptors can be attached to all of a routes children.
+
+    [[["/" ^:intercptors [...]
+      ["/hello" {:get hello-world}]
+      ["/goodbye" {:get goodbye-world}]
+     ]]]
+
+Incpetors can be added deeper in the routes table as well.
+
+    [[["/" ^:intercptors [...]
+      *["/hello" *{:get *hello-world}]
+      ["/goodbye" {:get goodbye-world}]
+     ]]]
+
+The ```*``` indicates an attachment point.
+
+Getting back to the application, two interceptors will be added. One handling requests to unknown destinations and one for request logging. (27:39)
+
+The log function is actually provided by ```io.pedestal.http```. Two interceptors will be used. ```http/log-request``` and ```http/not-found```. ```http/not-found``` is a loead interceptor. This means that after no response will be returned by any route or interceptor, it will create a standard ```404``` error. Calling [/hello](http://localhost:8080/hello),  [/goodbye](http://localhost:8080/goodbye) and  [/goodbye-world](http://localhost:8080/goodbye-world) will display the proper log messages and messages in the browser.
+
+By adding a new route ```/request``` the anatomy of a request can by introspected and and displayed visually. It will be available for any http verb (```GET```, ```POST```, ```PUT```, and ```DELETE```). The route will invoke a handler ```request``` which will in its response display the ```req``` argument map. This route will be addressed from the command line at this point, because it would the resonse would be downloaded as a file from the browser. Hitting
+
+    curl localhost:8080/request
+
+In the command line will prompt a big junk of data, which is basically a map. Since this data might be of big interest for monitoring the application's state or bug fixing, a handler will be used to print the map into a web page. It is borrowed from Ring, another Clojure web framework. Ring's handlers are drop in compatible, which makes a reuse of existing functionality very easy. This is done by adding a dependency in ```project.clj``` for the Ring library.
+
+    (defproject todoit "0.1.0-SNAPSHOT"
+      :description "FIXME: write description"
+      :url "http://example.com/FIXME"
+      :license {:name "Eclipse Public License"
+                :url "http://www.eclipse.org/legal/epl-v10.html"}
+      :dependencies [[org.clojure/clojure "1.6.0"]
+                     [io.pedestal/pedestal.service "0.3.0-SNAPSHOT"]
+                     [io.pedestal/pedestal.service-tools "0.3.0-SNAPSHOT"]
+                     [io.pedestal/pedestal.jetty "0.3.0-SNAPSHOT"]
+                     [ns-tracker "0.2.2"]
+                     [ring/ring-devel "1.2.2"]
+                     ]
+      :main todoit.core)
+
+After restarting the server and pulling the Ring dependency, adding Ring as a dependency to ```src/todoit/core.clj```, using the dump handler to create a web page displaying all data necessary.
+
+In ```src/todoit/core.clj``` the namespace ```ring.handle.dump``` is added, using the ```handle-dump``` function to create a website. The ```request``` handler can be delete, since the route will use ```handle-dump```.
+
+    (ns todoit.core
+      (:require [io.pedestal.http.route.definition :refer [defroutes]]
+                [io.pedestal.http.route :as route :refer [router]]
+                [io.pedestal.http :as http]
+                [ns-tracker.core :refer [ns-tracker]]
+                [ring.handler.dump :refer [handle-dump]]))
+    
+    (defn hello-world [reg]
+      {:status 200
+       :body "Hello, world!"
+       :headers {}})
+    
+    (defn goodbye-world [req]
+      {:status 200
+       :body "Goodbye, cruel world."
+       :headers {}})
+    
+    (defroutes routes
+     [[["/"
+        ["/hello" {:get hello-world}]
+        ["/goodbye" {:get goodbye-world}]
+        ["/request" {:any handle-dump}]]]])
+    
+    (def modified-namespaces (ns-tracker "src"))
+    
+    (def service
+      {::http/interceptors [http/log-request
+                            http/not-found
+                            (router (fn []
+                              (doseq [ns-sym (modified-namespaces)]
+                                (require ns-sym :reload))
+                                routes))]
+       ::http/port 8080})
+    
+    (defn -main [& args]
+      (-> service
+          http/create-server
+          http/start))
+
+Having that in place, [/request](http://localhost:8080/request) will return page containg all data provided. 
+
+The small application being build should provide a little more functionality, like printing the name of a user passed in the query string. Requesting [/request?name=ryan](http://localhost:8080/request?name=ryan) will print the appropriate queury string. This is actually not that useful, since an arbitray amount of arguments could be passed that way and working with a map of query arguments would be much more easier to handle. This is a behaviour which should be applied to any incoming request.
+
+The first action to take is adding the ```route/query-param``` to the list of interceptors. This transforms the query passed into a map of key/value pairs.
+
+    (ns todoit.core
+      (:require [io.pedestal.http.route.definition :refer [defroutes]]
+                [io.pedestal.http.route :as route :refer [router]]
+                [io.pedestal.http :as http]
+                [ns-tracker.core :refer [ns-tracker]]
+                [ring.handler.dump :refer [handle-dump]]))
+    
+    (defn hello-world [reg]
+      {:status 200
+       :body "Hello, world!"
+       :headers {}})
+    
+    (defn goodbye-world [req]
+      {:status 200
+       :body "Goodbye, cruel world."
+       :headers {}})
+    
+    (defroutes routes
+     [[["/"
+        ["/hello" {:get hello-world}]
+        ["/goodbye" {:get goodbye-world}]
+        ["/request" {:any handle-dump}]]]])
+    
+    (def modified-namespaces (ns-tracker "src"))
+    
+    (def service
+      {::http/interceptors [http/log-request
+                            http/not-found
+                            route/query-param
+                            (router (fn []
+                              (doseq [ns-sym (modified-namespaces)]
+                                (require ns-sym :reload))
+                                routes))]
+       ::http/port 8080})
+    
+    (defn -main [& args]
+      (-> service
+          http/create-server
+          http/start))
+
+Refreshing [/request?name=ryan](http://localhost:8080/request?name=ryan) will now actually display ```:params``` and ```:query-params``` as a map. Since this operation is done on the context's request map, getting single arguments like ```name``` used in our example is a piece of pie. This allows for a more sphisticated ```hello-world``` handler. The handler will be modified to print the name provided by the query.
+
+    (ns todoit.core
+      (:require [io.pedestal.http.route.definition :refer [defroutes]]
+                [io.pedestal.http.route :as route :refer [router]]
+                [io.pedestal.http :as http]
+                [ns-tracker.core :refer [ns-tracker]]
+                [ring.handler.dump :refer [handle-dump]]))
+    
+    (defn hello-world [reg]
+      (let [name (get-in req [:query-params :name])]
+        {:status 200
+         :body (str "Hello, " name "!")
+         :headers {}}))
+    
+    (defn goodbye-world [req]
+      {:status 200
+       :body "Goodbye, cruel world."
+       :headers {}})
+    
+    (defroutes routes
+     [[["/"
+        ["/hello" {:get hello-world}]
+        ["/goodbye" {:get goodbye-world}]
+        ["/request" {:any handle-dump}]]]])
+    
+    (def modified-namespaces (ns-tracker "src"))
+    
+    (def service
+      {::http/interceptors [http/log-request
+                            http/not-found
+                            route/query-param
+                            (router (fn []
+                              (doseq [ns-sym (modified-namespaces)]
+                                (require ns-sym :reload))
+                                routes))]
+       ::http/port 8080})
+    
+    (defn -main [& args]
+      (-> service
+          http/create-server
+          http/start))
+
+
+
+
+
+
+
+
+
+
