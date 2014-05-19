@@ -2,7 +2,7 @@
 
 A CRUD application based on Ryan Neufeld's Pedastal workshop.
 
-# Project setup
+## Project setup
 
 Creating a project based on the standard leiningen template.
 
@@ -518,9 +518,11 @@ This will print the name passed URL query string, but it will take the name as i
           http/create-server
           http/start))
  
- This will print the name passed properly.
+This will print the name passed properly.
+
+## Persistence
  
- The next big piece of work will be adding persistence to the project. Starting by adding a new file. In ```resources``` a file named ```todos.edn``` should be added. It contains a small schema for the datomic database.
+The next big piece of work will be adding persistence to the project. Starting by adding a new file. In ```resources``` a file named ```todos.edn``` should be added. It contains a small schema for the datomic database.
  
     [{:db/id #db/id [:db.part/db]
       :db/ident :todo/title
@@ -556,7 +558,7 @@ It contains basically a list of maps describing a todos attributes with attribut
                      [ring/ring-devel "1.2.2"]
                      [com.datomic/datomic-free "0.9.4699"
                       :exclusions [org.slf4j/jul-to-slf4j
-                               org.slf4j/slf4j-nop]]
+                                   org.slf4j/slf4j-nop]]
                      ]
       :main todoit.core)
 
@@ -566,11 +568,169 @@ To interact with the application and playing around with the persistence layer, 
 
 This will download the dependencies and connect to the application.
 
-Now, ```src/todoit``` a new folder ```todo``` will be added with the file ```db.clj```.
+Now, ```src/todoit``` a new folder ```todo``` will be added with the file ```db.clj```. In the file evrything about the model will be described.
+
+    (ns todoit.todo.db
+      (:require [datomic.api :as d]))
+    
+    ; generating a unique database uri for an in-memory database.
+    (defonce uri (str "datomic:mem://" (gensym "todos")))
+    ; creating a database for the uri.
+    (d/create-database uri)
+    ; defining a connection to it.
+    (def conn (d/connect uri))
+    
+    ; schema-transaction
+    (def schema-tx (->> "todos.edn"
+                        clojure.java.io/resource
+                        slurp
+                        (clojure.edn/read-string {:readers *data-readers*})))
+    
+    ; d/transact is basically a database commit which returns a future
+    ; it is dereferenced with the @ symbol
+    @(d/transact conn schema-tx)
+
+This basically the starting point. It creates a database at the created uri and commits our schema to the database.
+
+To actually add some data, a create-todo function will be added, which takes a title and a description and commits the data to the database.
+
+    (ns todoit.todo.db
+      (:require [datomic.api :as d]))
+    
+    ; generating a unique database uri for an in-memory database.
+    (defonce uri (str "datomic:mem://" (gensym "todos")))
+    ; creating a database for the uri.
+    (d/create-database uri)
+    ; defining a connection to it.
+    (def conn (d/connect uri))
+    
+    ; schema-transaction
+    (def schema-tx (->> "todos.edn"
+                        clojure.java.io/resource
+                        slurp
+                        (clojure.edn/read-string {:readers *data-readers*})))
+    
+    ; d/transact is basically a database commit which returns a future
+    ; it is dereferenced with the @ symbol
+    @(d/transact conn schema-tx)
+    
+    (defn todo-tx [title description]
+      (cond-> {:db/id (d/tempid :db.part/user)
+               :todo/title title
+               :todo/description description
+               :todo/completed? false}
+            description (assoc :todo/description description)  ;; add description if not nil
+            true vector))                                      ;; always wrap anything in a vector,
+                                                               ;; because d/transact always expects
+                                                               ;; a list of entities.
+    
+    (defn create-todo [title description]
+      @(d/transact conn (todo-tx title description)))
 
 
+> TODO: remove comments in code paraphrase them
 
+This can now be tested in the repl.
 
+    todoit.core=> (require 'todoit.todo.db)
 
+When no compile errors occourred, the function ```in-ns``` can be used to set the scope to the given namespace providing the possibility to operate on functions from within the namespace.
 
+    todoit.core=> (in-ns 'todoit.todo.db)
 
+For a first interaction with the database, todo-tx is called with only a title and no description.
+
+    todoit.todo.db=> (todo-tx "Get it done." nil)
+
+This will return a vector of entities.
+
+    todoit.todo.db=> (todo-tx "Get it done." "Because I have to.")
+
+Having a ```create-todo``` function already in place, that can be used as well. It will return, in contrast to ```todo-tx```, more information about the database state including the previous state of the data.
+
+    todoit.todo.db=> (require 'todoit.todo.db :reload)
+    todoit.todo.db=> (create-todo "Get it done." "Because I have to.")
+
+Querying all todos can be done similar to querying in SQL databases.
+
+    (ns todoit.todo.db
+      (:require [datomic.api :as d]))
+    
+    (defonce uri (str "datomic:mem://" (gensym "todos")))
+    (d/create-database uri)
+    (def conn (d/connect uri))
+    
+    (def schema-tx (->> "todos.edn"
+                        clojure.java.io/resource
+                        slurp
+                        (clojure.edn/read-string {:readers *data-readers*})))
+
+    @(d/transact conn schema-tx)
+    
+    (defn todo-tx [title description]
+      (cond-> {:db/id (d/tempid :db.part/user)
+                :todo/title title
+                :todo/completed? false}
+              description (assoc :todo/description description)
+              true vector))
+
+    (defn create-todo [title description]
+      @(d/transact conn (todo-tx title description)))
+
+    (defn all-todos [db]
+      (->> (d/q '[:find ?id
+                  :where [?id :todo/title]] db)
+           (map first)
+           (map #(d/entity db %))))
+
+The function ```all-todos``` provides access to all todos created. The not so intuitive result of the query is being processed, to get a lazily constructed map back. The query returns a set of vectors containing an id. ```(map first)``` is applied to the set exatracting the ids and ```(map #(d/entity db %))))``` will construct an entity. It is constructed lazily through, containing at first only the id. When more properties are required, those will be requested from the database.
+
+To see the title of the first todo loaded, the following expression will print the value.
+
+    todoit.todo.db=> (:todo/title (first (all-todos (d/db conn))))
+
+To get access to all of an entities attribute d/touch comes in handy - which should be avoided in production because it involves a lot of read access.
+
+    todoit.todo.db=> (map d/touch (all-todos (d/db conn)))
+
+Another function which is a requirement for the todo list we're building is a function to update the status of a todo. Instead of passing a whole todo, the id and the new status will be passed.
+
+    (ns todoit.todo.db
+      (:require [datomic.api :as d]))
+    
+    (defonce uri (str "datomic:mem://" (gensym "todos")))
+    (d/create-database uri)
+    (def conn (d/connect uri))
+    
+    (def schema-tx (->> "todos.edn"
+                        clojure.java.io/resource
+                        slurp
+                        (clojure.edn/read-string {:readers *data-readers*})))
+    
+    @(d/transact conn schema-tx)
+    
+    (defn todo-tx [title description]
+      (cond-> {:db/id (d/tempid :db.part/user)
+                :todo/title title
+                :todo/completed? false}
+            description (assoc :todo/description description)
+            true vector))
+    
+    (defn create-todo [title description]
+      @(d/transact conn (todo-tx title description)))
+    
+    (defn all-todos [db]
+      (->> (d/q '[:find ?id
+                  :where [?id :todo/title]] db)
+           (map first)
+           (map #(d/entity db %))))
+    
+    (defn toggle-status [id status]
+        @(d/transact conn [[:db/add id :todo/completed? status]]))
+
+This can be tested easily by reloading the namespace and then invoking the method by a valid id. The id can be copy pasted from todos created.
+
+    todoit.todo.db=> (require 'todoit.todo.db :reload)
+    todoit.todo.db=> (toggle-status 17592186045418 true)
+
+The last thing to add is a function which provides the possibility to delete a todo.
