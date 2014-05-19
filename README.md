@@ -734,3 +734,216 @@ This can be tested easily by reloading the namespace and then invoking the metho
     todoit.todo.db=> (toggle-status 17592186045418 true)
 
 The last thing to add is a function which provides the possibility to delete a todo.
+
+    (ns todoit.todo.db
+      (:require [datomic.api :as d]))
+
+    (defonce uri (str "datomic:mem://" (gensym "todos")))
+    (d/create-database uri)
+    (def conn (d/connect uri))
+    
+    (def schema-tx (->> "todos.edn"
+                        clojure.java.io/resource
+                        slurp
+                        (clojure.edn/read-string {:readers *data-readers*})))
+    
+    @(d/transact conn schema-tx)
+    
+    (defn todo-tx [title description]
+      (cond-> {:db/id (d/tempid :db.part/user)
+                :todo/title title
+                :todo/completed? false}
+            description (assoc :todo/description description)
+            true vector))
+    
+    (defn create-todo [title description]
+      @(d/transact conn (todo-tx title description)))
+    
+    (defn all-todos [db]
+      (->> (d/q '[:find ?id
+                  :where [?id :todo/title]] db)
+           (map first)
+           (map #(d/entity db %))))
+    
+    (defn toggle-status [id status]
+      @(d/transact conn [[:db/add id :todo/completed? status]]))
+    
+    (defn delete-todo [id]
+      @(d/transact conn [[:db.fn/retractEntity id]]))
+
+To delete a todo, it is only necessary to pass the id of the todo. `:db.fn/retractEntity` will take care of removing the entity. But deleting is the wrong verb to use. The database will act as if all facts about the entity are deleted from this this point in time forward. That is a unique characteristic of Datomic.
+
+> TODO: Write a query completed-todos that ensures [?id :todo/completed? true].
+
+## Wiring up C & R
+
+This chapter will be all about wiring up CRUD operations to routes. Although we working in th repl is fun, this is server side development now. `lein run` restarts the server.
+
+Starting by adding a controller, which is stored in `src/todoit/todo.clj`.
+
+    (ns todoit.todo
+      (:require [io.pedestal.interceptor :refer [defhandler]]
+                [io.pedestal.http.route :refer [url-for]]
+                [ring.util.response :refer [response redirect]]
+                [datomic.api :as d]
+                [todoit.todo.db :as db]))
+
+There are already some familiar requirements, new is the usage of pedestal's `defhandler` macro. It basically constructs a request to response handler and is an indicator for an interceptor function, rather a simple processing instruction.
+`url-for` is used for contructing urls for responses. From Ring the functions are imported to have some less typing.
+
+Starting with a plain text index function to display a list of todos.
+
+    (ns todoit.todo
+      (:require [io.pedestal.interceptor :refer [defhandler]]
+                [io.pedestal.http.route :refer [url-for]]
+                [ring.util.response :refer [response redirect]]
+                [datomic.api :as d]
+                [todoit.todo.db :as db]))
+    
+    (defhandler index [req]
+      (let [todos (db/all-todos (d/db db/conn))]
+        (response (str "<html>"
+                         "<body>"
+                           "<div>"
+                           (if (seq todos)
+                             (mapv :todo/title todos)
+                             "<p>All done here!</p>")
+                           "</div>"
+                         "</body>"
+                       "</html>"))))
+
+The index handler basically reads all todos from the database and maps the todos to their title and prints them in the resulting page. The handler will be used in `src/todoit/core.clj` as a handler for a route.
+
+    (ns todoit.core
+      (:require [io.pedestal.http.route.definition :refer [defroutes]]
+                [io.pedestal.http.route :as route :refer [router]]
+                [io.pedestal.http :as http]
+                [ns-tracker.core :refer [ns-tracker]]
+                [ring.handler.dump :refer [handle-dump]]
+                [io.pedestal.interceptor :refer [defon-request]]
+                [todoit.todo :as todo]))
+    
+    (defon-request capitalize-name [req]
+      (update-in req [:query-params :name]
+        (fn [name] (when name (clojure.string/capitalize name)))))
+    
+    (defn hello-world [req]
+      (let [name (get-in req [:query-params :name])]
+        {:status 200
+         :body (str "Hello, " (if (not(clojure.string/blank? name)) name "world") "!")
+         :headers {}}))
+    
+    (defn goodbye-world [req]
+      {:status 200
+       :body "Goodbye, cruel world."
+       :headers {}})
+    
+    (defroutes routes
+     [[["/"
+        ["/hello" ^:interceptors [capitalize-name] {:get hello-world}]
+        ["/goodbye" {:get goodbye-world}]
+        ["/request" {:any handle-dump}]
+        ["/todos" {:get todo/index}]]]])
+    
+    (def modified-namespaces (ns-tracker "src"))
+    
+    (def service
+      {::http/interceptors [http/log-request
+                            http/not-found
+                            route/query-params
+                            (router (fn []
+                              (doseq [ns-sym (modified-namespaces)]
+                                (require ns-sym :reload))
+                                routes))]
+       ::http/port 8080})
+    
+    (defn -main [& args]
+      (-> service
+          http/create-server
+          http/start))
+
+When [/todos](http://localhost:8080/todos) is opened in the browser, a plain text message should appear, since no proper content type is set. When working with a web based application serving mostly html, the usage of an interceptor post-processing the response so that it will by displayed properly in the browser. The interceptor `io.pedestal.http/html-body` is a fitting match. The interceptor will be used at the root route, so that it will be applied to all routes respectively. When the browser is now refreshed, the html is displayed properly.
+
+> TODO: no restart required?
+
+What's currently missing is at least a simple way to add a new todo. This will be changed by added a form to the controller's index handler's response.
+
+    (ns todoit.todo
+      (:require [io.pedestal.interceptor :refer [defhandler]]
+                [io.pedestal.http.route :refer [url-for]]
+                [ring.util.response :refer [response redirect]]
+                [datomic.api :as d]
+                [todoit.todo.db :as db]))
+    
+    (defhandler index [req]
+      (let [todos (db/all-todos (d/db db/conn))]
+        (response (str "<html>"
+                         "<body>"
+                           "<div>"
+                           (if (seq todos)
+                             (mapv :todo/title todos)
+                             "<p>All done here!</p>")
+                            "<form method=\"POST\" action=\"/todos\">"
+                              "<input name=\"title\" placeholder=\"title\">"
+                              "<input name=\"description\" placeholder=\"description\">"
+                              "<input type=\"submit\">"
+                            "</form>" 
+                           "</div>"
+                         "</body>"
+                       "</html>"))))
+
+To inspect the data being submitted, a handler for `/todos` will be added in the routes table for `:post`, invoking `handle-dump`. The given implememtation will bring up an error, saying that the route names are not unique. This is because the way Pedestal works, it comes up for a name for each route. Since handle-dump was used as a handler for more than one route, the naming broke. This can be fixed by providing a vector, rather then just a handler. This will fix the proiblem but when handle-dump creates the pages, the data bein submitted does not appear. This is because the data is wrapped around the body part, which is provided by jetty. The data can be extracted from an interceptor `body-params`. To be able to use this interceptor, a new namespace `io.pedestal.http.body-params` has to be added. Is used as an interceptor generating function. After restarting the server, `:form-params` will include the title and the description.
+
+    (ns todoit.core
+      (:require [io.pedestal.http.route.definition :refer [defroutes]]
+                [io.pedestal.http.route :as route :refer [router]]
+                [io.pedestal.http :as http]
+                [ns-tracker.core :refer [ns-tracker]]
+                [ring.handler.dump :refer [handle-dump]]
+                [io.pedestal.interceptor :refer [defon-request]]
+                [todoit.todo :as todo]
+                [io.pedestal.http.body-params :refer [body-params]]))
+    
+    (defon-request capitalize-name [req]
+      (update-in req [:query-params :name]
+        (fn [name] (when name (clojure.string/capitalize name)))))
+    
+    (defn hello-world [req]
+      (let [name (get-in req [:query-params :name])]
+        {:status 200
+         :body (str "Hello, " (if (not(clojure.string/blank? name)) name "world") "!")
+         :headers {}}))
+    
+    (defn goodbye-world [req]
+      {:status 200
+       :body "Goodbye, cruel world."
+       :headers {}})
+    
+    (defroutes routes
+     [[["/" ^:interceptors [http/html-body]
+        ["/hello" ^:interceptors [capitalize-name] {:get hello-world}]
+        ["/goodbye" {:get goodbye-world}]
+        ["/request" {:any handle-dump}]
+        ["/todos" {:get [:todos todo/index]
+                   :post [:todos#create handle-dump]}]]]])
+    
+    (def modified-namespaces (ns-tracker "src"))
+    
+    (def service
+      {::http/interceptors [http/log-request
+                            http/not-found
+                            route/query-params
+                            (body-params)
+                            (router (fn []
+                              (doseq [ns-sym (modified-namespaces)]
+                                (require ns-sym :reload))
+                                routes))]
+       ::http/port 8080})
+    
+    (defn -main [& args]
+      (-> service
+          http/create-server
+          http/start))
+
+
+> Exercise: Implement and wire up a create function in `todo.clj`. Hint: use a `let` a la hello world to  extract `[:form-params :title]` and `[:form-params :description]`. Once you've created a TODO, redirect to `(url-for :todos)`. 

@@ -4,7 +4,9 @@
             [io.pedestal.http :as http]
             [ns-tracker.core :refer [ns-tracker]]
             [ring.handler.dump :refer [handle-dump]]
-            [io.pedestal.interceptor :refer [defon-request]]))
+            [io.pedestal.interceptor :refer [defon-request]]
+            [todoit.todo :as todo]
+            [io.pedestal.http.body-params :refer [body-params]]))
 
 (defon-request capitalize-name [req]
   (update-in req [:query-params :name]
@@ -22,10 +24,12 @@
    :headers {}})
 
 (defroutes routes
- [[["/"
+ [[["/" ^:interceptors [http/html-body]
     ["/hello" ^:interceptors [capitalize-name] {:get hello-world}]
     ["/goodbye" {:get goodbye-world}]
-    ["/request" {:any handle-dump}]]]])
+    ["/request" {:any handle-dump}]
+    ["/todos" {:get [:todos todo/index]
+               :post [:todos#create handle-dump]}]]]])
 
 (def modified-namespaces (ns-tracker "src"))
 
@@ -33,6 +37,7 @@
   {::http/interceptors [http/log-request
                         http/not-found
                         route/query-params
+                        (body-params)
                         (router (fn []
                           (doseq [ns-sym (modified-namespaces)]
                             (require ns-sym :reload))
