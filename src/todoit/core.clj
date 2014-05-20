@@ -29,7 +29,7 @@
     ["/goodbye" {:get goodbye-world}]
     ["/request" {:any handle-dump}]
     ["/todos" {:get [:todos todo/index]
-               :post [:todos#create handle-dump]}]]]])
+               :post [:todos#create todo/create]}]]]])
 
 (def modified-namespaces (ns-tracker "src"))
 

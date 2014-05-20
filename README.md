@@ -775,7 +775,13 @@ To delete a todo, it is only necessary to pass the id of the todo. `:db.fn/retra
 
 > TODO: Write a query completed-todos that ensures [?id :todo/completed? true].
 
-## Wiring up C & R
+## Wiring up C & R (create and read of crud)
+
+1. controller actions for index and creating TODOs
+2. Wire up those actions to routes
+3. Learn how to name routes for easier reference
+4. Building a basic Web page.
+5. Learn about interceptors which help to parse a forms
 
 This chapter will be all about wiring up CRUD operations to routes. Although we working in th repl is fun, this is server side development now. `lein run` restarts the server.
 
@@ -946,4 +952,40 @@ To inspect the data being submitted, a handler for `/todos` will be added in the
           http/start))
 
 
-> Exercise: Implement and wire up a create function in `todo.clj`. Hint: use a `let` a la hello world to  extract `[:form-params :title]` and `[:form-params :description]`. Once you've created a TODO, redirect to `(url-for :todos)`. 
+> Exercise: Implement and wire up a create function in `todo.clj`. Hint: use a `let` a la hello world to  extract `[:form-params :title]` and `[:form-params :description]`. Once you've created a TODO, redirect to `(url-for :todos)`.
+
+    (ns todoit.todo.db
+      (:require [datomic.api :as d]))
+    
+    (defonce uri (str "datomic:mem://" (gensym "todos")))
+    (d/create-database uri)
+    (def conn (d/connect uri))
+    
+    (def schema-tx (->> "todos.edn"
+                        clojure.java.io/resource
+                        slurp
+                        (clojure.edn/read-string {:readers *data-readers*})))
+    
+    @(d/transact conn schema-tx)
+    
+    (defn todo-tx [title description]
+      (cond-> {:db/id (d/tempid :db.part/user)
+                :todo/title title
+                :todo/completed? false}
+            description (assoc :todo/description description)
+            true vector))
+    
+    (defn create-todo [title description]
+      @(d/transact conn (todo-tx title description)))
+    
+    (defn all-todos [db]
+      (->> (d/q '[:find ?id
+                  :where [?id :todo/title]] db)
+           (map first)
+           (map #(d/entity db %))))
+    
+    (defn toggle-status [id status]
+      @(d/transact conn [[:db/add id :todo/completed? status]]))
+    
+    (defn delete-todo [id]
+      @(d/transact conn [[:db.fn/retractEntity id]]))
