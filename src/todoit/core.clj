@@ -6,7 +6,8 @@
             [ring.handler.dump :refer [handle-dump]]
             [io.pedestal.interceptor :refer [defon-request]]
             [todoit.todo :as todo]
-            [io.pedestal.http.body-params :refer [body-params]]))
+            [io.pedestal.http.body-params :refer [body-params]]
+            [io.pedestal.http.ring-middlewares :as middleware]))
 
 (defon-request capitalize-name [req]
   (update-in req [:query-params :name]
@@ -37,6 +38,8 @@
   {::http/interceptors [http/log-request
                         http/not-found
                         route/query-params
+                        (middleware/file-info)
+                        (middleware/resource "public")
                         (body-params)
                         (router (fn []
                           (doseq [ns-sym (modified-namespaces)]

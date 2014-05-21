@@ -954,38 +954,131 @@ To inspect the data being submitted, a handler for `/todos` will be added in the
 
 > Exercise: Implement and wire up a create function in `todo.clj`. Hint: use a `let` a la hello world to  extract `[:form-params :title]` and `[:form-params :description]`. Once you've created a TODO, redirect to `(url-for :todos)`.
 
-    (ns todoit.todo.db
-      (:require [datomic.api :as d]))
+    (ns todoit.todo
+      (:require [io.pedestal.interceptor :refer [defhandler]]
+                [io.pedestal.http.route :refer [url-for]]
+                [ring.util.response :refer [response redirect]]
+                [datomic.api :as d]
+                [todoit.todo.db :as db]))
     
-    (defonce uri (str "datomic:mem://" (gensym "todos")))
-    (d/create-database uri)
-    (def conn (d/connect uri))
+    (defhandler create [req]
+      (let [title (get-in req [:form-params "title"])
+            description (get-in req [:form-params "description"])]
+        (when title
+          (print title)
+          (db/create-todo title description))
+        (redirect (url-for :todos))))
     
-    (def schema-tx (->> "todos.edn"
-                        clojure.java.io/resource
-                        slurp
-                        (clojure.edn/read-string {:readers *data-readers*})))
+    (defhandler index [req]
+      (let [todos (db/all-todos (d/db db/conn))]
+        (response (str "<html>"
+                         "<body>"
+                           "<div>"
+                           (if todos
+                             (mapv :todo/title todos)
+                             "<p>All done here!</p>")
+                           "</div>"
+                           "<form method=\"POST\" action=\"/todos\">"
+                             "<input name=\"title\" placeholder=\"title\">"
+                             "<input name=\"description\" placeholder=\"description\">"
+                             "<input type=\"submit\">"
+                           "</form>" 
+                         "</body>"
+                       "</html>"))))
+
+## New paint job
+
+Serving static files
+Segregate views
+Template pages via dsl.
+How to link to routes using url-for
+
+To give the app a better look, Twitter boostrap will be used. It has to be downloaded into `/resources/public`. Additional assets should be placed there as well. To actually serve the static resources, some ring middleware will be added to provide access to the static assets and file informations for the browser. The `io.pedestal.http.ring.middleware` will be added to the require declaration. Since ring is basically drop in compatible with pedestal, every ring middleware could be pulled apart and made interceptor compatible. To the list of interceptor two middleware will be added which are both interceptor generating functions. The middleware `middleware/resource` will be used to serve the resources pointing to the public directory containing the bootstrap library. The other middleware to be added is `middleware/file-info`. It will enrich header information with file sizes, content types etc, so that the browser is aware of the files being accessed.
+
+    (ns todoit.core
+      (:require [io.pedestal.http.route.definition :refer [defroutes]]
+                [io.pedestal.http.route :as route :refer [router]]
+                [io.pedestal.http :as http]
+                [ns-tracker.core :refer [ns-tracker]]
+                [ring.handler.dump :refer [handle-dump]]
+                [io.pedestal.interceptor :refer [defon-request]]
+                [todoit.todo :as todo]
+                [io.pedestal.http.body-params :refer [body-params]]
+                [io.pedestal.http.ring-middlewares :as middleware]))
     
-    @(d/transact conn schema-tx)
+    (defon-request capitalize-name [req]
+      (update-in req [:query-params :name]
+        (fn [name] (when name (clojure.string/capitalize name)))))
     
-    (defn todo-tx [title description]
-      (cond-> {:db/id (d/tempid :db.part/user)
-                :todo/title title
-                :todo/completed? false}
-            description (assoc :todo/description description)
-            true vector))
+    (defn hello-world [req]
+      (let [name (get-in req [:query-params :name])]
+        {:status 200
+         :body (str "Hello, " (if (not(clojure.string/blank? name)) name "world") "!")
+         :headers {}}))
     
-    (defn create-todo [title description]
-      @(d/transact conn (todo-tx title description)))
+    (defn goodbye-world [req]
+      {:status 200
+       :body "Goodbye, cruel world."
+       :headers {}})
     
-    (defn all-todos [db]
-      (->> (d/q '[:find ?id
-                  :where [?id :todo/title]] db)
-           (map first)
-           (map #(d/entity db %))))
+    (defroutes routes
+     [[["/" ^:interceptors [http/html-body]
+        ["/hello" ^:interceptors [capitalize-name] {:get hello-world}]
+        ["/goodbye" {:get goodbye-world}]
+        ["/request" {:any handle-dump}]
+        ["/todos" {:get [:todos todo/index]
+                   :post [:todos#create todo/create]}]]]])
     
-    (defn toggle-status [id status]
-      @(d/transact conn [[:db/add id :todo/completed? status]]))
+    (def modified-namespaces (ns-tracker "src"))
     
-    (defn delete-todo [id]
-      @(d/transact conn [[:db.fn/retractEntity id]]))
+    (def service
+      {::http/interceptors [http/log-request
+                            http/not-found
+                            route/query-params
+                            (middleware/file-info)
+                            (middleware/resource "public")
+                            (body-params)
+                            (router (fn []
+                              (doseq [ns-sym (modified-namespaces)]
+                                (require ns-sym :reload))
+                                routes))]
+       ::http/port 8080})
+    
+    (defn -main [& args]
+      (-> service
+          http/create-server
+          http/start))
+
+Restarting the browser and requesting [/bootstrap/css/bootstrap.min.css](http://localhost:8080/bootstrap/css/bootstrap.min.css) should display the contents of the file.
+
+### Addig a template library
+
+To provide a more convenient a flexible way for creating views, [hiccup](https://github.com/weavejester/hiccup) will be used. It provides an elegant way to create markup with Clojure syntax.
+
+    (defproject todoit "0.1.0-SNAPSHOT"
+      :description "FIXME: write description"
+      :url "http://example.com/FIXME"
+      :license {:name "Eclipse Public License"
+                :url "http://www.eclipse.org/legal/epl-v10.html"}
+      :dependencies [[org.clojure/clojure "1.6.0"]
+                     [io.pedestal/pedestal.service "0.3.0-SNAPSHOT"]
+                     [io.pedestal/pedestal.service-tools "0.3.0-SNAPSHOT"]
+                     [io.pedestal/pedestal.jetty "0.3.0-SNAPSHOT"]
+                     [ns-tracker "0.2.2"]
+                     [ring/ring-devel "1.2.2"]
+                     [com.datomic/datomic-free "0.9.4699"
+                      :exclusions [org.slf4j/jul-to-slf4j
+                                   org.slf4j/slf4j-nop]]
+                     [hiccup "1.0.5"]]
+      :main todoit.core)
+
+Restarting the server will download the dependency. In `src/todoit` a new namepace will be added in file `view.clj`. The namespace will contain the function for rendering TODOs.
+
+    (ns todoit.todo.view
+      :require [io.pedestal.http.route :refer [url-for]]
+               [hiccup.page :refer [html5]]
+               [hiccup.core :refer [h]])
+
+This will include `html5` for rendering the page according to the html 5 specification and `h` for a proper encoding of entities and so on.
+
+~ 83:00

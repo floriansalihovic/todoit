@@ -12,5 +12,6 @@
                  [com.datomic/datomic-free "0.9.4699"
                   :exclusions [org.slf4j/jul-to-slf4j
                                org.slf4j/slf4j-nop]]
+                 [hiccup "1.0.5"]
                  ]
   :main todoit.core)
